@@ -1,114 +1,128 @@
+from datetime import datetime, timedelta
+import os
+
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+import uuid
 
-# 1. Generate private key for CA
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///documentation.db'
+app.config['UPLOAD_FOLDER'] = 'uploads'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+db = SQLAlchemy(app)
+
+# TODO: read key from somewhere
 ca_key = rsa.generate_private_key(
     public_exponent=65537,
     key_size=2048,
     backend=default_backend()
 )
 
-# 2. Build CA subject name
-ca_name = x509.Name([
-    x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),
-    x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"MyState"),
-    x509.NameAttribute(NameOID.LOCALITY_NAME, u"MyCity"),
-    x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"MyOrg"),
-    x509.NameAttribute(NameOID.COMMON_NAME, u"My Root CA"),
-])
-
-# 3. Create a self-signed certificate for the CA
-ca_cert = (
-    x509.CertificateBuilder()
-    .subject_name(ca_name)
-    .issuer_name(ca_name)  # self-signed, so issuer is the same as subject
-    .public_key(ca_key.public_key())
-    .serial_number(x509.random_serial_number())
-    .not_valid_before(datetime.utcnow())
-    .not_valid_after(datetime.utcnow() + timedelta(days=3650))  # 10-year expiry
-    .add_extension(
-        x509.BasicConstraints(ca=True, path_length=None),
-        critical=True
+# TODO: fix
+def certify():
+    user_public_key = serialization.load_pem_public_key(
+        request.form.get('public_key'),
     )
-    .sign(private_key=ca_key, algorithm=hashes.SHA256(), backend=default_backend())
-)
+    # Build a subject name for the user. 
+    # Let's say we store "Alice" in the Common Name (CN).
+    user_subject = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),  # or appropriate values
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"MyState"),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, u"MyCity"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"MyOrg"),
+        x509.NameAttribute(NameOID.COMMON_NAME, u"Alice"),
+    ])
 
-# 4. (Optional) Save the CA cert/key to files
-with open("my_root_ca_key.pem", "wb") as f:
-    f.write(
-        ca_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption(),  # or use a passphrase
-        )
-    )
-
-with open("my_root_ca_cert.pem", "wb") as f:
-    f.write(
-        ca_cert.public_bytes(encoding=serialization.Encoding.PEM)
+    # Build an X.509 Certificate for the user
+    user_cert_builder = x509.CertificateBuilder().subject_name(
+        user_subject
+    ).issuer_name(
+        ca_cert.subject  # Issued by our CA
+    ).public_key(
+        user_public_key
+    ).serial_number(
+        x509.random_serial_number()
+    ).not_valid_before(
+        datetime.datetime.now(datetime.UTC)
+    ).not_valid_after(
+        # Set certificate validity, e.g. 1 year
+        datetime.datetime.now(datetime.UTC) + timedelta(days=365)
+    ).add_extension(
+        # Typically for end-entity certs, you might not set path_length
+        x509.BasicConstraints(ca=False, path_length=None),
+        critical=True,
     )
 
-
-# Suppose we have the CA key and CA cert loaded from above
-# Now generate a private key for the user’s certificate:
-user_key = rsa.generate_private_key(
-    public_exponent=65537,
-    key_size=2048,
-    backend=default_backend()
-)
-
-# Build a subject name for the user. 
-# Let's say we store "Alice" in the Common Name (CN).
-user_subject = x509.Name([
-    x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),  # or appropriate values
-    x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"MyState"),
-    x509.NameAttribute(NameOID.LOCALITY_NAME, u"MyCity"),
-    x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"MyOrg"),
-    x509.NameAttribute(NameOID.COMMON_NAME, u"Alice"),
-])
-
-# Build an X.509 Certificate for the user
-user_cert_builder = x509.CertificateBuilder().subject_name(
-    user_subject
-).issuer_name(
-    ca_cert.subject  # Issued by our CA
-).public_key(
-    user_key.public_key()
-).serial_number(
-    x509.random_serial_number()
-).not_valid_before(
-    datetime.datetime.now(datetime.UTC)
-).not_valid_after(
-    # Set certificate validity, e.g. 1 year
-    datetime.datetime.now(datetime.UTC) + timedelta(days=365)
-).add_extension(
-    # Typically for end-entity certs, you might not set path_length
-    x509.BasicConstraints(ca=False, path_length=None),
-    critical=True,
-)
-
-# Sign the user's certificate using the CA's private key
-user_cert = user_cert_builder.sign(
-    private_key=ca_key,
-    algorithm=hashes.SHA256(),
-    backend=default_backend()
-)
-
-# (Optional) Save the user’s certificate and private key to files
-with open("alice_key.pem", "wb") as f:
-    f.write(
-        user_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
+    # Sign the user's certificate using the CA's private key
+    user_cert = user_cert_builder.sign(
+        private_key=ca_key,
+        algorithm=hashes.SHA256(),
+        backend=default_backend()
     )
 
-with open("alice_cert.pem", "wb") as f:
-    f.write(
-        user_cert.public_bytes(encoding=serialization.Encoding.PEM)
+class PublicKey(db.Model):
+    id = db.Column(db.String(36), primary_key=True)
+    key = db.Column(db.Text, nullable=False)
+
+class Documentation(db.Model):
+    id = db.Column(db.String(36), db.ForeignKey('public_key.id'), primary_key=True)
+    license_front = db.Column(db.String(255), nullable=False)
+    license_back = db.Column(db.String(255), nullable=False)
+    headshot = db.Column(db.String(255), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='pending')
+
+@app.before_first_request
+def create_tables():
+    db.create_all()
+
+@app.route('/submit_documentation', methods=['POST'])
+def submit_documentation():
+    if 'license_front' not in request.files or 'license_back' not in request.files or 'headshot' not in request.files:
+        return jsonify({'error': 'Missing required image files.'}), 400
+    
+    public_key = request.form.get('public_key')
+    if not public_key:
+        return jsonify({'error': 'Public key is required.'}), 400
+
+    user_id = str(uuid.uuid4())
+    
+    # Save public key
+    new_key = PublicKey(id=user_id, key=public_key)
+    db.session.add(new_key)
+
+    # Save images
+    file_paths = {}
+    for image_name in ['license_front', 'license_back', 'headshot']:
+        file = request.files[image_name]
+        filename = f"{user_id}_{image_name}_{file.filename}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        file_paths[image_name] = filepath
+
+    # Save documentation info
+    new_doc = Documentation(
+        id=user_id,
+        license_front=file_paths['license_front'],
+        license_back=file_paths['license_back'],
+        headshot=file_paths['headshot'],
+        status='pending'
     )
+    db.session.add(new_doc)
+    db.session.commit()
+
+    return jsonify({'id': user_id}), 200
+
+@app.route('/check_status/<string:user_id>', methods=['GET'])
+def check_status(user_id):
+    doc = Documentation.query.filter_by(id=user_id).first()
+    if not doc:
+        return jsonify({'error': 'Documentation not found.'}), 404
+    return jsonify({'status': doc.status}), 200
+
+if __name__ == '__main__':
+    app.run(debug=True)
