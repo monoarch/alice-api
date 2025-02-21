@@ -76,8 +76,7 @@ class Documentation(db.Model):
     headshot = db.Column(db.String(255), nullable=False)
     status = db.Column(db.String(20), nullable=False, default='pending')
 
-@app.before_first_request
-def create_tables():
+with app.app_context():
     db.create_all()
 
 @app.route('/submit_documentation', methods=['POST'])
