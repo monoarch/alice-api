@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import os
+import uuid
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -8,7 +9,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-import uuid
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///documentation.db'
