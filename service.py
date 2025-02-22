@@ -89,6 +89,7 @@ def submit_documentation():
         return jsonify({'error': 'Public key is required.'}), 400
 
     user_id = str(uuid.uuid4())
+    print(user_id)
     
     # Save public key
     new_key = PublicKey(id=user_id, key=public_key)
